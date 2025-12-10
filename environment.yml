@@ -1,0 +1,25 @@
+name: learning
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - ipython
+  - versioneer
+  - numpy
+  - pymc>=5
+  - pytensor
+  - nutpie
+  - numba
+  - arviz
+  - matplotlib
+  - scipy
+  - graphviz
+  - jaxlib
+  - jax
+  - blackjax
+  - numpyro
+  - plotly
+  - pandas
+  - pip
+  - pip:
+      - canvasapi

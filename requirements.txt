@@ -1,0 +1,5 @@
+numpy
+pymc
+pandas
+plotly
+canvasapi

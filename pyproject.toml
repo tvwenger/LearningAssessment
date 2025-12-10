@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools", "versioneer[toml]==0.29"]
+build-backend = "setuptools.build_meta"
+
+[tool.versioneer]
+VCS = "git"
+style = "pep440"
+versionfile_source = "learning_assessment/_version.py"
+versionfile_build = "learning_assessment/_version.py"
+tag_prefix = "v"
+
+[project]
+name = "learning_assessment"
+description = "A Gaussian Process Model for Student Learning Assessments"
+authors = [
+  { name="Trey Wenger", email="tvwenger@gmail.com" },
+]
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dynamic = ["version", "dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/tvwenger/LearningAssessments"
+
+[project.scripts]
+download_assessments = "learning_assessment.download_assessments:main"
+assessments_model = "learning_assessment.model:main"
+send_assessments = "learning_assessment.send_assessments:main"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.coverage.run]
+omit = [
+    "learning_assessment/_version.py",
+]
