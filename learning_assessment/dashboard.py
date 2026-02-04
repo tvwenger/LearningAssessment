@@ -150,6 +150,7 @@ def student_summary(
     prob_plot_height=400,
     percentiles=[5.0, 95.0],
     score_labels=["No Evidence", "Below Mastery", "Mastery"],
+    hide_model=False,
 ):
     if not os.path.isdir(model.outdir):
         os.mkdir(model.outdir)
@@ -191,88 +192,95 @@ def student_summary(
             )
 
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            fig.add_trace(
-                go.Scatter(
-                    x=model.models[objective].posterior_predictive.norm_date
-                    * model.date_range
-                    + model.date_offset,
-                    y=np.percentile(
-                        0.25
-                        + (model.max_score - 1.0)  # offset for missing assignments
-                        * model.models[objective]
-                        .posterior_predictive.sel(student=student)
-                        .p_pred,
-                        [percentiles[0]],
-                        axis=1,
-                    )[0],
-                    mode="lines",
-                    line=dict(color="lightblue", width=1),
-                    fill=None,
-                    name=f"{int(percentiles[0])}th Percentile",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=model.models[objective].posterior_predictive.norm_date
-                    * model.date_range
-                    + model.date_offset,
-                    y=np.percentile(
-                        0.25
-                        + (model.max_score - 1.0)  # offset for missing assignments
-                        * model.models[objective]
-                        .posterior_predictive.sel(student=student)
-                        .p_pred,
-                        [percentiles[1]],
-                        axis=1,
-                    )[0],
-                    mode="lines",
-                    line=dict(color="lightblue", width=1),
-                    fill="tonexty",
-                    fillcolor="rgba(173, 216, 230, 0.25)",
-                    name=f"{int(percentiles[1])}th Percentile",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=model.models[objective].posterior_predictive.norm_date
-                    * model.date_range
-                    + model.date_offset,
-                    y=np.percentile(
-                        0.25
-                        + (model.max_score - 1.0)  # offset for missing assignments
-                        * model.models[objective]
-                        .posterior_predictive.sel(student=student)
-                        .p_pred,
-                        [50.0],
-                        axis=1,
-                    )[0],
-                    mode="lines",
-                    line=dict(color="darkblue", width=3),
-                    name="Median",
-                )
-            )
-            samples = np.random.choice(
-                model.models[objective].posterior_predictive.sample, 30, replace=False
-            )
-            for sample in samples:
+            if not hide_model:
                 fig.add_trace(
                     go.Scatter(
                         x=model.models[objective].posterior_predictive.norm_date
                         * model.date_range
                         + model.date_offset,
-                        y=(
+                        y=np.percentile(
                             0.25
                             + (model.max_score - 1.0)  # offset for missing assignments
                             * model.models[objective]
-                            .posterior_predictive.sel(student=student, sample=sample)
-                            .p_pred
-                        ),
+                            .posterior_predictive.sel(student=student)
+                            .p_pred,
+                            [percentiles[0]],
+                            axis=1,
+                        )[0],
                         mode="lines",
-                        line=dict(color="darkblue", width=1),
-                        opacity=0.1,
-                        showlegend=False,
+                        line=dict(color="lightblue", width=1),
+                        fill=None,
+                        name=f"{int(percentiles[0])}th Percentile",
                     )
                 )
+                fig.add_trace(
+                    go.Scatter(
+                        x=model.models[objective].posterior_predictive.norm_date
+                        * model.date_range
+                        + model.date_offset,
+                        y=np.percentile(
+                            0.25
+                            + (model.max_score - 1.0)  # offset for missing assignments
+                            * model.models[objective]
+                            .posterior_predictive.sel(student=student)
+                            .p_pred,
+                            [percentiles[1]],
+                            axis=1,
+                        )[0],
+                        mode="lines",
+                        line=dict(color="lightblue", width=1),
+                        fill="tonexty",
+                        fillcolor="rgba(173, 216, 230, 0.25)",
+                        name=f"{int(percentiles[1])}th Percentile",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=model.models[objective].posterior_predictive.norm_date
+                        * model.date_range
+                        + model.date_offset,
+                        y=np.percentile(
+                            0.25
+                            + (model.max_score - 1.0)  # offset for missing assignments
+                            * model.models[objective]
+                            .posterior_predictive.sel(student=student)
+                            .p_pred,
+                            [50.0],
+                            axis=1,
+                        )[0],
+                        mode="lines",
+                        line=dict(color="darkblue", width=3),
+                        name="Median",
+                    )
+                )
+                samples = np.random.choice(
+                    model.models[objective].posterior_predictive.sample,
+                    30,
+                    replace=False,
+                )
+                for sample in samples:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=model.models[objective].posterior_predictive.norm_date
+                            * model.date_range
+                            + model.date_offset,
+                            y=(
+                                0.25
+                                + (
+                                    model.max_score - 1.0
+                                )  # offset for missing assignments
+                                * model.models[objective]
+                                .posterior_predictive.sel(
+                                    student=student, sample=sample
+                                )
+                                .p_pred
+                            ),
+                            mode="lines",
+                            line=dict(color="darkblue", width=1),
+                            opacity=0.1,
+                            showlegend=False,
+                        )
+                    )
             fig.add_trace(
                 go.Scatter(
                     x=model.models[objective].posterior_predictive.norm_date
@@ -813,6 +821,12 @@ def main():
         default=[5.0, 95.0],
         help="Percentiles for trend plots",
     )
+    PARSER.add_argument(
+        "--hide_model",
+        action="store_true",
+        default=False,
+        help="Hide model details in student dashboard",
+    )
     ARGS = vars(PARSER.parse_args())
 
     with open(ARGS["input_file"], "rb") as f:
@@ -833,6 +847,7 @@ def main():
         prob_plot_height=ARGS["prob_plot_height"],
         percentiles=ARGS["percentiles"],
         score_labels=ARGS["score_labels"],
+        hide_model=ARGS["hide_model"],
     )
     class_summary(
         models,
