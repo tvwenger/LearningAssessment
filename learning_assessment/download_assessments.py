@@ -74,6 +74,7 @@ def download(canvas_url, course_id):
                         if "points" not in assessment.keys():
                             warnings.warn(
                                 f"ALERT: Assignment {assignment} has ungraded rubric item(s)."
+                                + f" (student ID: {submission.user_id})."
                             )
                             student_assessment[rubric_items[rubric_id]] = np.nan
                         else:
@@ -82,7 +83,8 @@ def download(canvas_url, course_id):
                             ]
                 except AttributeError:
                     warnings.warn(
-                        f"ALERT: Assignment {assignment} is missing rubric assessment."
+                        f"ALERT: Assignment {assignment} is missing rubric assessment"
+                        + f" (student ID: {submission.user_id})."
                     )
                     for rubric_id in rubric_items.keys():
                         student_assessment[rubric_items[rubric_id]] = np.nan
