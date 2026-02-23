@@ -15,6 +15,7 @@ import os
 import arviz as az
 import numpy as np
 import cloudpickle as pickle
+import pandas as pd
 
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -250,7 +251,7 @@ def student_summary(
                         )[0],
                         mode="lines",
                         line=dict(color="darkblue", width=3),
-                        name="Median",
+                        name="Median Score Prediction",
                     )
                 )
                 samples = np.random.choice(
@@ -362,7 +363,7 @@ def student_summary(
                 secondary_y=False,
             )
             fig.update_layout(
-                title=dict(text=f"Student: {student}, Objective: {objective}"),
+                title=dict(text=f"Student: {student}<br>Objective: {objective}"),
                 xaxis=dict(title=dict(text="Date")),
                 yaxis=dict(
                     title=dict(text="Score"),
@@ -410,8 +411,8 @@ def student_summary(
             fig.update_layout(
                 title=dict(
                     text=(
-                        f"Student: {student}, Objective: {objective}<br>"
-                        + f"Predictive Probability on {model.last_assignment_date[objective]}"
+                        f"Student: {student}<br>Objective: {objective}<br>"
+                        + f"Predictive Probability at {pd.to_datetime(model.last_assignment_date[objective]).date()}"
                     )
                 ),
                 xaxis=dict(
@@ -456,7 +457,7 @@ def student_summary(
             title=dict(
                 text=(
                     f"Student: {student}, Objective Mastery<br>"
-                    + f"Predictive Probability on {datetime.now().date()}"
+                    + f"Predictive Probability at {datetime.now().date()}"
                 )
             ),
             xaxis=dict(
@@ -508,7 +509,7 @@ def class_summary(
         title=dict(
             text=(
                 "Class Mastery Distribution<br>"
-                + f"Predictive Probability on {datetime.now().date()}"
+                + f"Predictive Probability at {datetime.now().date()}"
             )
         ),
         xaxis=dict(
@@ -563,7 +564,7 @@ def class_summary(
                 )[0],
                 mode="lines",
                 line=dict(color="black", width=5),
-                name="Class Median",
+                name="Class Median Score Prediction",
             )
         )
         fig.add_trace(

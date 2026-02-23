@@ -13,6 +13,7 @@ import arviz as az
 import pymc as pm
 import numpy as np
 import cloudpickle as pickle
+import pandas as pd
 
 from canvasapi import Canvas
 
@@ -28,11 +29,21 @@ class ObjectiveModels:
         mastery_score=2.0,
         mastery_threshold=0.6,
         date_samples=50,
+        start_date=None,
+        end_date=None,
     ):
         # Load data
         data = load(datapath)
-        self.date_offset = data["Date"].min()
-        self.date_range = data["Date"].max() - data["Date"].min()
+        if start_date is None:
+            start_date = data["Date"].min()
+        else:
+            start_date = pd.to_datetime(start_date)
+        if end_date is None:
+            end_date = data["Date"].max()
+        else:
+            end_date = pd.to_datetime(end_date)
+        self.date_offset = start_date
+        self.date_range = end_date - start_date
         data["Date Norm"] = (data["Date"] - self.date_offset) / self.date_range
         self.data = data
 
@@ -260,6 +271,18 @@ def main():
         default=1,
         help="Thin predictive samples",
     )
+    PARSER.add_argument(
+        "--start_date",
+        type=str,
+        default=None,
+        help="Start date for model",
+    )
+    PARSER.add_argument(
+        "--end_date",
+        type=str,
+        default=None,
+        help="End date for model",
+    )
     ARGS = vars(PARSER.parse_args())
 
     canvas = Canvas(ARGS["canvas_url"], os.environ["CANVAS_TOKEN"])
@@ -273,6 +296,8 @@ def main():
         max_score=ARGS["max_score"],
         mastery_score=ARGS["mastery_score"],
         date_samples=ARGS["date_samples"],
+        start_date=ARGS["start_date"],
+        end_date=ARGS["end_date"],
     )
     models.build(
         intercept=ARGS["intercept"],
