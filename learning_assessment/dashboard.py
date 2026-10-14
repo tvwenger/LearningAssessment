@@ -104,7 +104,7 @@ def model_summary(
     # Plot ell posterior distributions
     fig = go.Figure()
     count, index = np.histogram(
-        model.models[model.objectives[0]].prior.prior["ell"].data.flatten(),
+        model.models[model.objectives[0]].prior.prior["ell_norm"].data.flatten(),
         bins=25,
     )
     fig.add_trace(
@@ -117,7 +117,7 @@ def model_summary(
     )
     for objective in model.objectives:
         count, index = np.histogram(
-            model.models[objective].trace.posterior["ell"].data.flatten(),
+            model.models[objective].trace.posterior["ell_norm"].data.flatten(),
             bins=25,
         )
         fig.add_trace(
@@ -282,12 +282,13 @@ def student_summary(
                             showlegend=False,
                         )
                     )
+            before_last = model.models[objective].posterior_predictive.norm_date <= model.norm_dates[objective].values[model.last_assignment[objective]]
             fig.add_trace(
                 go.Scatter(
-                    x=model.models[objective].posterior_predictive.norm_date
+                    x=model.models[objective].posterior_predictive.norm_date[before_last]
                     * model.date_range
                     + model.date_offset,
-                    y=p_mastery,
+                    y=p_mastery[before_last],
                     mode="lines",
                     line=dict(color="red", width=3),
                     name="Probability of Mastery",
@@ -363,7 +364,7 @@ def student_summary(
                 secondary_y=False,
             )
             fig.update_layout(
-                title=dict(text=f"Student: {student}<br>Objective: {objective}"),
+                title=dict(text=f"Student: {model.student_names[student]}<br>Objective: {objective}"),
                 xaxis=dict(title=dict(text="Date")),
                 yaxis=dict(
                     title=dict(text="Score"),
@@ -382,6 +383,7 @@ def student_summary(
                 color="red",
                 secondary_y=True,
                 showgrid=False,
+                automargin=True,
             )
             fig.write_html(
                 os.path.join(
@@ -411,7 +413,7 @@ def student_summary(
             fig.update_layout(
                 title=dict(
                     text=(
-                        f"Student: {student}<br>Objective: {objective}<br>"
+                        f"Student: {model.student_names[student]}<br>Objective: {objective}<br>"
                         + f"Predictive Probability at {pd.to_datetime(model.last_assignment_date[objective]).date()}"
                     )
                 ),
@@ -420,6 +422,7 @@ def student_summary(
                     tickmode="array",
                     tickvals=[0, 1],
                     ticktext=["Below Mastery", "At or Above Mastery"],
+                    range=[-0.5, 1.5],
                 ),
                 yaxis=dict(title=dict(text="Probability")),
                 autosize=False,
@@ -456,7 +459,7 @@ def student_summary(
         fig.update_layout(
             title=dict(
                 text=(
-                    f"Student: {student}, Objective Mastery<br>"
+                    f"Student: {model.student_names[student]}, Objective Mastery<br>"
                     + f"Predictive Probability at {datetime.now().date()}"
                 )
             ),
@@ -465,6 +468,7 @@ def student_summary(
                 tickmode="array",
                 tickvals=[0, 1],
                 ticktext=["Below Mastery", "At or Above Mastery"],
+                range=[-0.5, 1.5],
             ),
             yaxis=dict(title=dict(text="Number of Objectives")),
             autosize=False,
@@ -492,19 +496,19 @@ def class_summary(
         os.mkdir(os.path.join(model.outdir, "class"))
 
     # Histogram of mastered objectives
-    students_mastery = np.zeros(len(model.students))
+    fig = go.Figure()
     for i, student in enumerate(model.students):
+        student_mastery = 0
         for objective in model.objectives:
             if model.mastery[student][objective] > model.mastery_threshold:
-                students_mastery[i] += 1
-    fig = go.Figure()
-    fig.add_trace(
-        go.Histogram(
-            x=students_mastery,
-            name="Class Mastery",
-            xbins=dict(start=-0.5, end=len(model.objectives) + 0.5, size=1),
+                student_mastery += 1
+        fig.add_trace(
+            go.Histogram(
+                x=[student_mastery],
+                name=f"{model.student_names[student]}",
+                xbins=dict(start=-0.5, end=len(model.objectives) + 1.5, size=1)
+            )
         )
-    )
     fig.update_layout(
         title=dict(
             text=(
@@ -514,12 +518,16 @@ def class_summary(
         ),
         xaxis=dict(
             title=dict(text="Number of Objectives"),
-            range=[0.5, len(model.objectives) + 0.5],
+            tickmode="array",
+            tickvals=list(range(0, len(model.objectives)+1)),
+            range=[-0.5, len(model.objectives)+0.5],
         ),
         yaxis=dict(title=dict(text="Number of Students")),
         autosize=False,
         width=trend_plot_width,
         height=trend_plot_height,
+        barmode="stack",
+        bargap=0.1,
     )
     fig.write_html(
         os.path.join(model.outdir, "class", "class_mastery.html"),
@@ -546,7 +554,7 @@ def class_summary(
                         axis=1,
                     )[0],
                     mode="lines",
-                    name=f"{student}",
+                    name=f"{model.student_names[student]}",
                 )
             )
             num_mastery += model.mastery_timeline[student][objective]
@@ -646,7 +654,7 @@ def build_dashboard(
         f.write("<ul>\n")
         for student in model.students:
             f.write(
-                f'<li><a href="students/{student}/index.html">Student: {student}</a></li>\n'
+                f'<li><a href="students/{student}/index.html">Student: {model.student_names[student]}</a></li>\n'
             )
         f.write("</ui>\n")
         f.write("</body></html>\n")
@@ -724,13 +732,13 @@ def build_dashboard(
         with open(
             os.path.join(model.outdir, "students", f"{student}", "index.html"), "w"
         ) as f:
-            f.write(f"<html><head><title>Student: {student}</title></head>\n")
+            f.write(f"<html><head><title>Student: {model.student_names[student]}</title></head>\n")
             f.write("<body>\n")
             f.write(
                 '<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.32.0/plotly.min.js"></script>\n'
             )
             f.write("<a href='../../index.html'>Back to Dashboard</a><br>\n")
-            f.write(f"<h1>Student: {student}</h1>\n")
+            f.write(f"<h1>Student: {model.student_names[student]}</h1>\n")
             with open(
                 os.path.join(model.outdir, "students", f"{student}", "mastery.html"),
                 "r",
@@ -761,23 +769,23 @@ def build_dashboard(
                         )
                         + "\n"
                     )
-                with open(
-                    os.path.join(
-                        model.outdir,
-                        "students",
-                        f"{student}",
-                        f"{objective}_prob.html",
-                    ),
-                    "r",
-                ) as f_in:
-                    div = f_in.read()
-                    f.write(
-                        div.replace(
-                            "<div>",
-                            f'<div style="display:inline-block; width:{prob_plot_width+50}px;">',
-                        )
-                        + "<br/>\n"
-                    )
+                # with open(
+                #     os.path.join(
+                #         model.outdir,
+                #         "students",
+                #         f"{student}",
+                #         f"{objective}_prob.html",
+                #     ),
+                #     "r",
+                # ) as f_in:
+                #     div = f_in.read()
+                #     f.write(
+                #         div.replace(
+                #             "<div>",
+                #             f'<div style="display:inline-block; width:{prob_plot_width+50}px;">',
+                #         )
+                #         + "<br/>\n"
+                #     )
             f.write("</body></html>\n")
 
 

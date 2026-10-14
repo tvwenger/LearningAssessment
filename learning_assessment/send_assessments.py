@@ -13,7 +13,7 @@ import warnings
 from canvasapi import Canvas
 
 
-def send(canvas_url, course_id):
+def send(canvas_url, course_id, student_ids=None):
     canvas = Canvas(canvas_url, os.environ["CANVAS_TOKEN"])
     course = canvas.get_course(course_id)
     outdir = course.name
@@ -29,6 +29,8 @@ def send(canvas_url, course_id):
     students = course.get_users(enrollment_type=["student"])
 
     for student in students:
+        if student_ids is not None and student.id not in student_ids:
+            continue
         dashboard = os.path.join(outdir, "students", f"{student.id}", "index.html")
         if not os.path.exists(dashboard):
             warnings.warn(f"No dashboard found for {student.id}")
@@ -45,22 +47,29 @@ def send(canvas_url, course_id):
                 for line in fin:
                     if "Back to Dashboard" not in line:
                         fout.write(line)
+        count = 0
+        while count < 5:
+            try:
+                success, uploaded_file = folder.upload(new_dashboard)
+                if not success:
+                    warnings.warn(f"Failed to upload dashboard for {student.id}")
+                    continue
 
-        success, uploaded_file = folder.upload(new_dashboard)
-        if not success:
-            warnings.warn(f"Failed to upload dashboard for {student.id}")
-            continue
-
-        canvas.create_conversation(
-            recipients=[student.id],
-            subject="Updated Learning Assessment Dashboard",
-            body="Please open the attached file in your web browser to view the dashboard.",
-            attachment_ids=[uploaded_file["id"]],
-            context_code=f"course_{course_id}",
-            group_conversation=True,
-            bulk_message=True,
-        )
-        print(f"Sent dashboard to {student.name} ({student.id})")
+                canvas.create_conversation(
+                    recipients=[student.id],
+                    subject="Updated Learning Assessment Dashboard",
+                    body="Please open the attached file in your web browser to view the dashboard.",
+                    attachment_ids=[uploaded_file["id"]],
+                    context_code=f"course_{course_id}",
+                    group_conversation=True,
+                    bulk_message=True,
+                )
+                print(f"Sent dashboard to {student.name} ({student.id})")
+                break
+            except:
+                count += 1
+        else:
+            print("Failed to send dashboard to {student.name} ({student.id})")
 
 
 def main():
@@ -71,5 +80,12 @@ def main():
     )
     PARSER.add_argument("canvas_url", type=str, help="Canvas URL")
     PARSER.add_argument("course_id", type=int, help="Course ID")
+    PARSER.add_argument(
+        "--student_ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Student IDs to send. By default send all.",
+    )
     ARGS = vars(PARSER.parse_args())
-    send(ARGS["canvas_url"], ARGS["course_id"])
+    send(ARGS["canvas_url"], ARGS["course_id"], student_ids=ARGS["student_ids"])
