@@ -8,6 +8,7 @@ This code is licensed under MIT license (see LICENSE for details)
 """
 
 import argparse
+import logging
 import os
 import arviz as az
 import pymc as pm
@@ -15,9 +16,9 @@ import numpy as np
 import cloudpickle as pickle
 import pandas as pd
 
-from canvasapi import Canvas
-
 from learning_assessment.loader import load
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ObjectiveModels:
@@ -49,13 +50,36 @@ class ObjectiveModels:
 
         # Unique students and objectives
         self.students = sorted(data["id"].unique())
+        self.student_names = {
+            student: self.data.loc[self.data["id"] == student, "name"].values[0]
+            for student in self.students
+        }
         self.objectives = sorted(
             [
                 col
                 for col in data.columns
-                if col not in ["id", "Date", "Assignment", "Date Norm"]
+                if col not in ["id", "name", "Date", "Assignment", "Date Norm"]
             ]
         )
+
+        # catch dropped students
+        drop_students = []
+        for objective in self.objectives:
+            num_assignments = np.zeros(len(self.students), dtype=int)
+            for i, student in enumerate(self.students):
+                sub_data = self.data.loc[self.data["id"] == student]
+                score = sub_data[objective]
+                num_assignments[i] = len(sub_data["Assignment"][~score.isna()])
+            for i, student in enumerate(self.students):
+                if num_assignments[i] != np.median(num_assignments):
+                    drop_students.append(student)
+        for student in np.unique(drop_students):
+            _LOGGER.warning(
+                f"ALERT: {self.student_names[student]} is missing assessments and will be dropped."
+            )
+        self.students = [
+            student for student in self.students if student not in drop_students
+        ]
 
         self.norm_date_axis = np.linspace(0.0, 1.0, date_samples)
         self.max_score = max_score
@@ -69,10 +93,10 @@ class ObjectiveModels:
         self.norm_dates = {}
         self.last_assignment = {}
         self.last_assignment_date = {}
+        self.median_norm_date_diff = {}
         for objective in self.objectives:
             # Build data array (shape: students, assignments)
             assignments = None
-            scores = None
             norm_dates = None
             for i, student in enumerate(self.students):
                 sub_data = self.data.loc[self.data["id"] == student]
@@ -99,6 +123,18 @@ class ObjectiveModels:
                 self.last_assignment[objective]
             ]
 
+            # minimum norm_date difference between assessments
+            # excluding zero
+            norm_dates_diff = np.diff(np.sort(norm_dates.values))
+            norm_dates_diff = norm_dates_diff[norm_dates_diff > 0]
+            if len(norm_dates_diff) == 0:
+                norm_dates_diff = [1.0]
+            self.median_norm_date_diff[objective] = np.median(norm_dates_diff)
+            _LOGGER.info(
+                f"Objective: {objective} "
+                + f"median norm_date diff: {self.median_norm_date_diff[objective]:.4f}"
+            )
+
         # Storage for results
         self.gps = {}
         self.models = {}
@@ -107,7 +143,7 @@ class ObjectiveModels:
         self,
         intercept=0.0,
         prior_ell=[2.0, 2.0],
-        prior_eta=1.0,
+        prior_eta=[1.5, 2.0],
         cov_func="matern52",
         missing="replace",
     ):
@@ -118,7 +154,7 @@ class ObjectiveModels:
 
         # Loop over learning objectives
         for objective in self.objectives:
-            print(f"Building model for objective: {objective}")
+            _LOGGER.info(f"Building model for objective: {objective}")
 
             # Drop or replace zeros for sampling (missing assessments)
             scores = self.scores[objective].copy()
@@ -137,10 +173,22 @@ class ObjectiveModels:
                 }
             ) as self.models[objective]:
                 # gp parameters
-                # ell = pm.Beta("ell", alpha=prior_ell[0], beta=prior_ell[1])
-                ell = pm.LogitNormal("ell", mu=prior_ell[0], sigma=prior_ell[1])
-                eta = pm.HalfNormal("eta", sigma=prior_eta)
-                # eta = pm.Gamma("eta", alpha=2.0, beta=1.0)
+                # ell = pm.Beta("ell", mu=prior_ell[0], sigma=prior_ell[1])
+                # ell = pm.LogitNormal("ell", mu=prior_ell[0], sigma=prior_ell[1])
+                # ell = pm.Truncated(
+                #    "ell",
+                #    pm.Beta.dist(mu=prior_ell[0], sigma=prior_ell[1]),
+                #    lower=self.mean_norm_date_diff[objective]
+                # )
+                ell_norm = pm.Gamma("ell_norm", mu=prior_ell[0], sigma=prior_ell[1])
+                # ell_norm = pm.HalfNormal("ell_norm", sigma=prior_ell[0])
+                ell = pm.Deterministic(
+                    "ell", ell_norm * self.median_norm_date_diff[objective]
+                )
+                # ell = pm.Uniform("ell", lower=prior_ell[0], upper=prior_ell[1])
+                # ell = pm.HalfNormal("ell", sigma=prior_ell[0])
+                # eta = pm.HalfNormal("eta", sigma=prior_eta[0])
+                eta = pm.Gamma("eta", mu=prior_eta[0], sigma=prior_eta[1])
 
                 if cov_func == "matern52":
                     cov = eta**2.0 * pm.gp.cov.Matern52(1, ell)
@@ -172,7 +220,7 @@ class ObjectiveModels:
                     dims=["student", "assignment"],
                 )
 
-            print(f"Sampling prior for objective: {objective}")
+            _LOGGER.info(f"Sampling prior for objective: {objective}")
             # Sample prior
             with self.models[objective]:
                 self.models[objective].prior = pm.sample_prior_predictive()
@@ -180,11 +228,11 @@ class ObjectiveModels:
     def sample(self, thin_predictive=10):
         # Loop over learning objectives
         for objective in self.objectives:
-            print(f"Sampling posterior for objective: {objective}")
+            _LOGGER.info(f"Sampling posterior for objective: {objective}")
             with self.models[objective]:
                 self.models[objective].trace = pm.sample()
 
-            print(f"Sampling posterior predictive for objective: {objective}")
+            _LOGGER.info(f"Sampling posterior predictive for objective: {objective}")
             with self.models[objective]:
                 f_pred = self.gps[objective].conditional(
                     "f_pred",
@@ -218,8 +266,7 @@ def main():
         prog="model.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    PARSER.add_argument("canvas_url", type=str, help="Canvas URL")
-    PARSER.add_argument("course_id", type=int, help="Course ID")
+    PARSER.add_argument("outdir", type=str, help="Output directory")
     PARSER.add_argument("output_file", type=str, help="Output model pickle file")
     PARSER.add_argument("--max_score", type=int, default=2, help="Maximum score")
     PARSER.add_argument(
@@ -250,7 +297,8 @@ def main():
     PARSER.add_argument(
         "--prior_eta",
         type=float,
-        default=1.0,
+        nargs="+",
+        default=[1.5, 2.0],
         help="Gaussian process scatter prior",
     )
     PARSER.add_argument(
@@ -285,10 +333,12 @@ def main():
     )
     ARGS = vars(PARSER.parse_args())
 
-    canvas = Canvas(ARGS["canvas_url"], os.environ["CANVAS_TOKEN"])
-    course = canvas.get_course(ARGS["course_id"])
-    outdir = course.name
+    outdir = ARGS["outdir"]
     datapath = os.path.join(outdir, "assessments")
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
 
     models = ObjectiveModels(
         datapath,
@@ -307,5 +357,5 @@ def main():
         missing=ARGS["missing"],
     )
     models.sample(thin_predictive=ARGS["thin_predictive"])
-    with open(ARGS["output_file"], "wb") as f:
+    with open(os.path.join(outdir, ARGS["output_file"]), "wb") as f:
         pickle.dump(models, f)
