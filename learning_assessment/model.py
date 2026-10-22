@@ -50,36 +50,14 @@ class ObjectiveModels:
 
         # Unique students and objectives
         self.students = sorted(data["id"].unique())
+        self.student_index = {
+            student: index for index, student in enumerate(self.students)
+        }
         self.student_names = {
             student: self.data.loc[self.data["id"] == student, "name"].values[0]
             for student in self.students
         }
-        self.objectives = sorted(
-            [
-                col
-                for col in data.columns
-                if col not in ["id", "name", "Date", "Assignment", "Date Norm"]
-            ]
-        )
-
-        # catch dropped students
-        drop_students = []
-        for objective in self.objectives:
-            num_assignments = np.zeros(len(self.students), dtype=int)
-            for i, student in enumerate(self.students):
-                sub_data = self.data.loc[self.data["id"] == student]
-                score = sub_data[objective]
-                num_assignments[i] = len(sub_data["Assignment"][~score.isna()])
-            for i, student in enumerate(self.students):
-                if num_assignments[i] != np.median(num_assignments):
-                    drop_students.append(student)
-        for student in np.unique(drop_students):
-            _LOGGER.warning(
-                f"ALERT: {self.student_names[student]} is missing assessments and will be dropped."
-            )
-        self.students = [
-            student for student in self.students if student not in drop_students
-        ]
+        self.objectives = sorted(data["Objective"].unique())
 
         self.norm_date_axis = np.linspace(0.0, 1.0, date_samples)
         self.max_score = max_score
@@ -88,44 +66,58 @@ class ObjectiveModels:
         self.mastery_threshold = mastery_threshold
         self.var_names = ["eta", "ell"]
 
-        self.assignments = {}
-        self.scores = {}
-        self.norm_dates = {}
+        self.observations = {}
+        self.assessments = {}
         self.last_assignment = {}
         self.last_assignment_date = {}
+        self.last_assignment_norm_date = {}
         self.median_norm_date_diff = {}
         for objective in self.objectives:
-            # Build data array (shape: students, assignments)
-            assignments = None
-            norm_dates = None
-            for i, student in enumerate(self.students):
-                sub_data = self.data.loc[self.data["id"] == student]
-                score = sub_data[objective]
-                # Drop NaNs (not assessed)
-                nan = score.isna()
-                if assignments is None:
-                    assignments = sub_data["Assignment"][~nan]
-                    norm_dates = sub_data["Date Norm"][~nan]
-                    scores = np.ones((len(self.students), len(assignments))) * np.nan
-                    scores[i] = score[~nan]
-                else:
-                    # Checks
-                    assert len(assignments) == len(sub_data["Assignment"][~nan])
-                    assert np.all(norm_dates.values == sub_data["Date Norm"][~nan])
-                    scores[i] = score[~nan]
-            self.scores[objective] = scores.copy()
-            self.assignments[objective] = assignments
-            self.norm_dates[objective] = norm_dates
+            objective_data = data.loc[data["Objective"] == objective].copy()
+            assessment_data = (
+                objective_data[["Assignment", "Date", "Date Norm"]]
+                .drop_duplicates()
+                .sort_values(["Date", "Assignment"], ignore_index=True)
+            )
+            if assessment_data["Assignment"].duplicated().any():
+                raise ValueError(
+                    f"Objective {objective} has duplicate assignment names on "
+                    "different dates"
+                )
 
-            # norm_date of last assignment
-            self.last_assignment[objective] = np.nanargmax(norm_dates.values)
-            self.last_assignment_date[objective] = sub_data["Date"][~nan].values[
-                self.last_assignment[objective]
+            assessment_data["Assignment Index"] = np.arange(len(assessment_data))
+            assignment_index = assessment_data.set_index("Assignment")[
+                "Assignment Index"
             ]
+            objective_data["Student Index"] = objective_data["id"].map(
+                self.student_index
+            )
+            objective_data["Assignment Index"] = objective_data["Assignment"].map(
+                assignment_index
+            )
+            objective_data = objective_data.sort_values(
+                ["Date", "Assignment", "id"], ignore_index=True
+            )
+            if objective_data.duplicated(["id", "Assignment"]).any():
+                raise ValueError(
+                    f"Objective {objective} contains duplicate student-assignment "
+                    "observations"
+                )
 
-            # minimum norm_date difference between assessments
-            # excluding zero
-            norm_dates_diff = np.diff(np.sort(norm_dates.values))
+            self.observations[objective] = objective_data
+            self.assessments[objective] = assessment_data
+
+            # Index and date of the last assessment for this objective.
+            self.last_assignment[objective] = int(
+                assessment_data["Date Norm"].to_numpy().argmax()
+            )
+            last_assessment = assessment_data.iloc[self.last_assignment[objective]]
+            self.last_assignment_date[objective] = last_assessment["Date"]
+            self.last_assignment_norm_date[objective] = last_assessment["Date Norm"]
+
+            # Median normalized date difference between assessments, excluding
+            # assessments that occur on the same date.
+            norm_dates_diff = np.diff(np.sort(assessment_data["Date Norm"].to_numpy()))
             norm_dates_diff = norm_dates_diff[norm_dates_diff > 0]
             if len(norm_dates_diff) == 0:
                 norm_dates_diff = [1.0]
@@ -138,6 +130,7 @@ class ObjectiveModels:
         # Storage for results
         self.gps = {}
         self.models = {}
+        self.likelihood_observations = {}
 
     def build(
         self,
@@ -156,19 +149,36 @@ class ObjectiveModels:
         for objective in self.objectives:
             _LOGGER.info(f"Building model for objective: {objective}")
 
-            # Drop or replace zeros for sampling (missing assessments)
-            scores = self.scores[objective].copy()
+            # Select the long-form rows used by the likelihood. Scores of zero
+            # are retained as a legacy missing-value marker, while newly loaded
+            # missing submissions remain NaN.
+            observations = self.observations[objective].copy()
+            is_missing = observations["Score"].isna() | (observations["Score"] == 0.0)
             if missing == "drop":
-                scores[scores == 0.0] = np.nan
+                observations = observations.loc[~is_missing].copy()
             elif missing == "replace":
-                scores[scores == 0.0] = 1.0
+                observations.loc[is_missing, "Score"] = 1.0
             else:
                 raise ValueError(f"Invalid missing value handling: {missing}")
+            observations = observations.reset_index(drop=True)
+            self.likelihood_observations[objective] = observations
+
+            scores = observations["Score"].to_numpy()
+            if np.any(scores < 1.0) or np.any(scores > self.max_score):
+                raise ValueError(
+                    f"Objective {objective} has scores outside [1, {self.max_score}]"
+                )
+            if not np.allclose(scores, np.round(scores)):
+                raise ValueError(f"Objective {objective} has non-integer scores")
+
+            assessment_data = self.assessments[objective]
+            assignment_names = assessment_data["Assignment"].to_numpy()
 
             with pm.Model(
                 coords={
                     "student": self.students,
-                    "assignment": self.assignments[objective],
+                    "assignment": assignment_names,
+                    "observation": np.arange(len(observations)),
                     "norm_date": self.norm_date_axis,
                 }
             ) as self.models[objective]:
@@ -204,7 +214,7 @@ class ObjectiveModels:
                 self.gps[objective] = pm.gp.Latent(mean_func=mean_func, cov_func=cov)
                 f = self.gps[objective].prior(
                     "f",
-                    X=self.norm_dates[objective].values[:, None],
+                    X=assessment_data["Date Norm"].to_numpy()[:, None],
                     dims=["student", "assignment"],
                 )
 
@@ -212,12 +222,20 @@ class ObjectiveModels:
                 p = pm.Deterministic(
                     "p", pm.math.invlogit(f), dims=["student", "assignment"]
                 )
+                p_observed = pm.Deterministic(
+                    "p_observed",
+                    p[
+                        observations["Student Index"].to_numpy(dtype=int),
+                        observations["Assignment Index"].to_numpy(dtype=int),
+                    ],
+                    dims="observation",
+                )
                 _ = pm.Binomial(
                     "score",
                     n=int(self.max_score) - 1,  # offset for missing assignments
-                    p=p,
+                    p=p_observed,
                     observed=scores - 1,  # offset for missing assignments
-                    dims=["student", "assignment"],
+                    dims="observation",
                 )
 
             _LOGGER.info(f"Sampling prior for objective: {objective}")
@@ -234,6 +252,12 @@ class ObjectiveModels:
 
             _LOGGER.info(f"Sampling posterior predictive for objective: {objective}")
             with self.models[objective]:
+                _ = pm.Binomial(
+                    "score_assessment_pred",
+                    n=int(self.max_score) - 1,
+                    p=self.models[objective]["p"],
+                    dims=["student", "assignment"],
+                )
                 f_pred = self.gps[objective].conditional(
                     "f_pred",
                     self.norm_date_axis[:, None],
@@ -250,13 +274,20 @@ class ObjectiveModels:
                     p=p_pred,
                     dims=["student", "norm_date"],
                 )
+                posterior_predictive = pm.sample_posterior_predictive(
+                    self.models[objective].trace.sel(
+                        draw=slice(None, None, thin_predictive)
+                    ),
+                    var_names=[
+                        "score",
+                        "score_assessment_pred",
+                        "p_pred",
+                        "score_pred",
+                    ],
+                )
                 self.models[objective].posterior_predictive = az.extract(
-                    pm.sample_posterior_predictive(
-                        self.models[objective].trace.sel(
-                            draw=slice(None, None, thin_predictive)
-                        ),
-                        var_names=["score", "p_pred", "score_pred"],
-                    ).posterior_predictive
+                    posterior_predictive,
+                    group="posterior_predictive",
                 )
 
 
