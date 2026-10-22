@@ -70,7 +70,7 @@ def download(canvas_url, course_id, overwrite=False):
             os.remove(fname)
 
         # Check that assignment is graded
-        if assignment.needs_grading_count > 0:
+        if hasattr(assignment, "needs_grading_count") and assignment.needs_grading_count > 0:
             warnings.warn(f"ALERT: Assignment {assignment} has ungraded submissions.")
             continue
 
@@ -85,31 +85,28 @@ def download(canvas_url, course_id, overwrite=False):
         assessment_data = []
         for submission in submissions:
             student_assessment = {"id": submission.user_id, "name": course.get_user(submission.user_id)}
-            if submission.missing:
-                for rubric_id in rubric_items.keys():
-                    student_assessment[rubric_items[rubric_id]] = np.nan
-            else:
-                try:
-                    for rubric_id, assessment in submission.rubric_assessment.items():
-                        if "points" not in assessment.keys():
-                            warnings.warn(
-                                f"ALERT: Assignment {assignment} has ungraded rubric item(s)."
-                                + f" (student ID: {submission.user_id}, {course.get_user(submission.user_id)})."
-                            )
-                            student_assessment[rubric_items[rubric_id]] = np.nan
-                            all_good = False
-                        else:
-                            student_assessment[rubric_items[rubric_id]] = assessment[
-                                "points"
-                            ]
-                except AttributeError:
+            try:
+                for rubric_id, assessment in submission.rubric_assessment.items():
+                    if "points" not in assessment.keys():
+                        warnings.warn(
+                            f"ALERT: Assignment {assignment} has ungraded rubric item(s)."
+                            + f" (student ID: {submission.user_id}, {course.get_user(submission.user_id)})."
+                        )
+                        student_assessment[rubric_items[rubric_id]] = np.nan
+                        all_good = False
+                    else:
+                        student_assessment[rubric_items[rubric_id]] = assessment[
+                            "points"
+                        ]
+            except AttributeError:
+                if not submission.missing:
                     warnings.warn(
                         f"ALERT: Assignment {assignment} is missing rubric assessment"
                         + f" (student ID: {submission.user_id}, {course.get_user(submission.user_id)})."
                     )
                     all_good = False
-                    for rubric_id in rubric_items.keys():
-                        student_assessment[rubric_items[rubric_id]] = np.nan
+                for rubric_id in rubric_items.keys():
+                    student_assessment[rubric_items[rubric_id]] = np.nan
             assessment_data.append(student_assessment)
         assessment_data = pd.DataFrame(assessment_data)
 
