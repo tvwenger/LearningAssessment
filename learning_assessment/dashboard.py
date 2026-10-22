@@ -172,7 +172,7 @@ def student_summary(
                 1
                 + model.models[objective]
                 .posterior_predictive.sel(student=student)
-                .score.data
+                .score_assessment_pred.data
             )
             last_mastery = np.zeros_like(last_score_pred[last_idx])
             last_mastery[last_score_pred[last_idx] >= model.mastery_score] = 1
@@ -282,7 +282,10 @@ def student_summary(
                             showlegend=False,
                         )
                     )
-            before_last = model.models[objective].posterior_predictive.norm_date <= model.norm_dates[objective].values[model.last_assignment[objective]]
+            before_last = (
+                model.models[objective].posterior_predictive.norm_date
+                <= model.last_assignment_norm_date[objective]
+            )
             fig.add_trace(
                 go.Scatter(
                     x=model.models[objective].posterior_predictive.norm_date[before_last]
@@ -309,12 +312,8 @@ def student_summary(
                 go.Scatter(
                     x=np.array(
                         [
-                            model.norm_dates[objective].values[
-                                model.last_assignment[objective]
-                            ],
-                            model.norm_dates[objective].values[
-                                model.last_assignment[objective]
-                            ],
+                            model.last_assignment_norm_date[objective],
+                            model.last_assignment_norm_date[objective],
                         ]
                     )
                     * model.date_range
@@ -327,38 +326,47 @@ def student_summary(
                 secondary_y=True,
             )
 
-            # offset like dates by a small amount
-            ismissing = model.scores[objective][i] == 0.0
+            # Plot the student's long-form observations for this objective.
+            student_observations = model.observations[objective].loc[
+                model.observations[objective]["id"] == student
+            ]
+            ismissing = student_observations["Score"].isna() | (
+                student_observations["Score"] == 0.0
+            )
+            observed = student_observations.loc[~ismissing]
+            missing_observations = student_observations.loc[ismissing]
+
+            # Offset like dates by a small amount.
             offset = np.linspace(
-                -0.01, 0.01, len(model.norm_dates[objective][~ismissing])
+                -0.01, 0.01, len(observed)
             )
             fig.add_trace(
                 go.Scatter(
-                    x=(model.norm_dates[objective][~ismissing] + offset)
+                    x=(observed["Date Norm"].to_numpy() + offset)
                     * model.date_range
                     + model.date_offset,
-                    y=-0.75 + model.scores[objective][i][~ismissing],
+                    y=-0.75 + observed["Score"].to_numpy(),
                     mode="markers",
                     name="Scores",
                     marker=dict(color="black", size=10, symbol="x"),
-                    customdata=model.assignments[objective][~ismissing],
+                    customdata=observed["Assignment"].to_numpy(),
                     hovertemplate="<br>%{customdata}",
                 ),
                 secondary_y=False,
             )
             offset = np.linspace(
-                -0.01, 0.01, len(model.norm_dates[objective][ismissing])
+                -0.01, 0.01, len(missing_observations)
             )
             fig.add_trace(
                 go.Scatter(
-                    x=(model.norm_dates[objective][ismissing] + offset)
+                    x=(missing_observations["Date Norm"].to_numpy() + offset)
                     * model.date_range
                     + model.date_offset,
-                    y=np.zeros_like(model.norm_dates[objective][ismissing]),
+                    y=np.zeros(len(missing_observations)),
                     mode="markers",
                     name="Missing/No Assessment",
                     marker=dict(color="black", size=10, symbol="circle"),
-                    customdata=model.assignments[objective][ismissing],
+                    customdata=missing_observations["Assignment"].to_numpy(),
                     hovertemplate="<br>%{customdata}",
                 ),
                 secondary_y=False,
@@ -591,12 +599,8 @@ def class_summary(
             go.Scatter(
                 x=np.array(
                     [
-                        model.norm_dates[objective].values[
-                            model.last_assignment[objective]
-                        ],
-                        model.norm_dates[objective].values[
-                            model.last_assignment[objective]
-                        ],
+                        model.last_assignment_norm_date[objective],
+                        model.last_assignment_norm_date[objective],
                     ]
                 )
                 * model.date_range
