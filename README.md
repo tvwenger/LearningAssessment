@@ -20,11 +20,13 @@ This package allows an instructor to "fit" a statistical model to objective-base
 
 Consider a single course objective. Given a series of rubric assessments with ratings like "No Evidence", "Below Mastery", and "Mastery", we want to know what is the probability that a student has achieved "Mastery". We model these data using a Gaussian process (GP) prior. A GP prior is a prior over possible functions.
 
-The GP is defined by three parameters: `intercept` is the null-hypothesis normalized score, `ell` is the normalized timescale (0 being the first assessment due date and 1 being the most recent assessment due date) over which we expect scores to be correlated, and `eta` is the normalized score scatter. `intercept` is a tunable parameter set by the user. The other parameters, `ell` and `eta`, are treated as hyperparameters. That is, these parameters are assumed to govern the GPs for all students, and they are inferred from the data. The assumed prior on `ell` is a logit-normal distribution, and on `eta` is a Half-normal distribution.
+The GP is defined by three parameters: `intercept` is the prior mean of the latent score; `ell` is the correlation timescale in calendar days; and `eta` is the latent-score scatter. `intercept` is fixed by the user. The other parameters, `ell` and `eta`, are shared by all student GPs for a given objective and are inferred from the data.
 
-From the GP prior we predict the normalized score, `f`, for each student and each assignment. The normalized score is transformed into a probability of a given rating using a logistic transform. We assume a Binomial likelihood when comparing the predicted ratings to the actual ratings.
+The timescale is assigned the prior `ell ~ Gamma(mu=2, sigma=2`, where `mu` and `sigma` denote the distribution mean and standard deviation in units of days. The scatter is assigned `eta ~ Gamma(mu=1.5, sigma=2)`. These defaults can be changed with `--prior_ell MU_DAYS SIGMA_DAYS` and `--prior_eta MU SIGMA`.
 
-Posterior samples from this statistical model are drawn using Monte Carlo Markov Chains (MCMC).
+From the GP prior we predict a latent score, `f`, for each student and assessment. Every rubric is modeled with the same ordered-logistic likelihood. Score 0 (or `NaN`) represents No Evidence / a missing submission and is always excluded from the likelihood. A student or objective not listed in an assessment CSV is structurally absent and likewise contributes no likelihood observation. The likelihood models the `max_score` valid ratings numbered `1, ..., max_score`. For example, `max_score=2` models 1 (Below Mastery) and 2 (Mastery).
+
+Posterior samples from this statistical model are drawn using Markov Chain Monte Carlo (MCMC).
 
 Finally, we produce several dashboards that are useful for both the instructor and the students.
 1. Model dashboard: assess model performance, compare prior and posterior distributions, etc.
@@ -77,22 +79,17 @@ To build and fit the model, use `assessments_model`. There are many parameters.
 ```bash
 assessments_model --help
 ```
-```
-usage: model.py [-h] [--max_score MAX_SCORE] [--mastery_score MASTERY_SCORE] [--mastery_threshold MASTERY_THRESHOLD] [--score_labels SCORE_LABELS [SCORE_LABELS ...]]
-                [--date_samples DATE_SAMPLES] [--trend_plot_width TREND_PLOT_WIDTH] [--trend_plot_height TREND_PLOT_HEIGHT] [--prob_plot_width PROB_PLOT_WIDTH]
-                [--prob_plot_height PROB_PLOT_HEIGHT] [--intercept INTERCEPT] [--prior_ell PRIOR_ELL [PRIOR_ELL ...]] [--prior_eta PRIOR_ETA] [--cov_func COV_FUNC]
-                [--missing MISSING] [--thin_predictive THIN_PREDICTIVE] [--skip_pairplot] [--percentiles PERCENTILES PERCENTILES]
-                canvas_url course_id
-```
 
 The important parameters for the model specification are:
-1. `max_score`: the maximum "points" per rubric item.
-2. `mastery_threshold`: the probability threshold for "mastery".
-3. `intercept`: the Gaussian process prior mean. A value of 0 corresponds to a 50% prior probability of mastery. Use this to tune the model based on your prior expectation for mastery in the absence of evidence. The mastery score will 
-4. `prior_ell`: the shape of the Gaussian process prior normalized lengthscale.
-5. `prior_eta`: the shape of the Gaussian process prior scatter.
-6. `cov_func`: the Gaussian process kernel.
-7. `missing`: either `replace` (replace missing scores with the lowest non-zero score) or `drop` (do not include missing scores in the model).
+1. `max_score`: the largest valid rating and the number of likelihood categories. Valid modeled ratings must be consecutive integers `1, ..., max_score`; score 0 is reserved for No Evidence / missing.
+2. `mastery_score`: the lowest rating treated as mastery when summarizing posterior predictions.
+3. `mastery_threshold`: the posterior probability threshold used to classify mastery.
+4. `intercept`: the latent GP prior mean (default `-2`). With `max_score=2` and fixed cutpoint 0, an intercept of 0 corresponds to a 50% prior probability of rating 2 at the GP mean.
+5. `prior_ell MU_DAYS SIGMA_DAYS`: the mean and standard deviation, in calendar days, of the Gamma prior on the GP correlation timescale (default `2 2`).
+6. `prior_eta MU SIGMA`: the mean and standard deviation of the Gamma prior on latent-score scatter (default `1.5 2`).
+7. `cov_func`: the Gaussian process kernel: `matern32` (default), `matern52`, or `expquad`.
+
+Missing observations are not configurable: score 0, `NaN`, and absent CSV rows are always excluded from the likelihood.
 
 The output of this program is a dashboard that can be viewed in a web browser. The dashboard shows summaries for the (1) model, (2) class, and (3) each student.
 
