@@ -104,7 +104,7 @@ def model_summary(
     # Plot ell posterior distributions
     fig = go.Figure()
     count, index = np.histogram(
-        model.models[model.objectives[0]].prior.prior["ell_norm"].data.flatten(),
+        model.models[model.objectives[0]].prior.prior["ell"].data.flatten(),
         bins=25,
     )
     fig.add_trace(
@@ -117,7 +117,7 @@ def model_summary(
     )
     for objective in model.objectives:
         count, index = np.histogram(
-            model.models[objective].trace.posterior["ell_norm"].data.flatten(),
+            model.models[objective].trace.posterior["ell"].data.flatten(),
             bins=25,
         )
         fig.add_trace(
@@ -130,7 +130,7 @@ def model_summary(
         )
     fig.update_layout(
         title=dict(text=r"GP Lengthscale Posterior Distributions"),
-        xaxis=dict(title=dict(text=r"GP Lengthscale")),
+        xaxis=dict(title=dict(text=r"GP Lengthscale (days)")),
         yaxis=dict(title=dict(text="Probability Density")),
         autosize=False,
         width=trend_plot_width,
